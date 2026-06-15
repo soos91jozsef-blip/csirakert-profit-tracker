@@ -1,13 +1,26 @@
 import streamlit as st
 import pandas as pd
 import gspread
+import requests
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
 # Oldal beállítása
 st.set_page_config(page_title="Csírakert Pénzügy", layout="centered")
 
-# Google Sheets kapcsolat
+# --- 1. API és Google kapcsolatok ---
+@st.cache_data(ttl=21600) # ttl=21600 mp (6 óra) -> így kb. naponta 4-szer frissít
+def get_exchange_rate():
+    try:
+        api_key = st.secrets["api"]["exchange_rate_key"]
+        url = f"https://v6.exchangerate-api.com/v6/{api_key}/pair/RSD/HUF"
+        response = requests.get(url).json()
+        if response['result'] == 'success':
+            return response['conversion_rate']
+    except:
+        pass
+    return 3.0 # Biztonsági alapértelmezett, ha az API nem elérhető
+
 @st.cache_resource
 def get_gspread_client():
     creds_dict = st.secrets["gcp_service_account"]
@@ -23,8 +36,12 @@ def load_data(sheet_name):
     data = sheet.get_all_records()
     return pd.DataFrame(data), sheet
 
-# UI
+# --- 2. Felhasználói felület ---
 st.title("🌱 Csírakert Pénzügy")
+
+# Árfolyam kijelzése
+arfolyam = get_exchange_rate()
+st.caption(f"Aktuális árfolyam: 1 RSD = {arfolyam:.2f} HUF")
 
 mode = st.radio("Mód:", ["Adatrögzítés", "Kategóriák kezelése"], horizontal=True)
 
@@ -39,7 +56,6 @@ if mode == "Adatrögzítés":
             ft = st.number_input("Összeg (Ft)", min_value=0.0, step=10.0)
             dinar = st.number_input("Összeg (Dinar)", min_value=0.0, step=10.0)
         
-        # Dinamikus kategória betöltés
         try:
             kat_df, _ = load_data("Kategoriak")
             kat_lista = kat_df['Nev'].tolist()
@@ -65,13 +81,11 @@ if mode == "Adatrögzítés":
         except Exception as e:
             st.error(f"Hiba történt: {e}")
 
-    # Kimutatás
     st.divider()
     st.header("📊 Kimutatás")
     try:
         df_k, _ = load_data("Penzugy_Koltsegek")
         df_b, _ = load_data("Penzugy_Bevetelek")
-        arfolyam = 3.5 
         
         def calc_total(df):
             return df['Összeg_Ft'].sum() + (df['Összeg_Dinar'].sum() * arfolyam)
@@ -87,9 +101,7 @@ if mode == "Adatrögzítés":
         st.info("Még nincs elég adat a kimutatáshoz.")
 
 else:
-    # Kategóriák kezelése (Hozzáadás + Törlés)
     st.subheader("Kategóriák kezelése")
-    
     with st.expander("Új kategória hozzáadása"):
         new_kat = st.text_input("Új kategória neve:")
         if st.button("Hozzáadás"):
@@ -105,7 +117,6 @@ else:
         kat_df, sheet = load_data("Kategoriak")
         kat_lista = kat_df['Nev'].tolist()
         torlendo = st.selectbox("Válaszd ki a törlendő kategóriát:", kat_lista)
-        
         if st.button("Törlés véglegesítése"):
             cell = sheet.find(torlendo)
             sheet.delete_rows(cell.row)
