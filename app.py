@@ -62,7 +62,7 @@ if mode == "Adatrögzítés":
             kat_lista = kat_df['Nev'].tolist()
         except:
             kat_lista = ["Magok", "Eszközök", "Szállítás", "Egyéb"]
-        
+            
         kategoria = st.selectbox("Kategória", kat_lista) if menu == "Költség" else None
         submit = st.form_submit_button("Mentés a táblázatba")
     
@@ -86,33 +86,40 @@ if mode == "Adatrögzítés":
         df_k, _ = load_data("Penzugy_Koltsegek")
         df_b, _ = load_data("Penzugy_Bevetelek")
         
-        df_k['Koltseg_Ft_Total'] = df_k['Összeg_Ft'] + (df_k['Összeg_Dinar'] * rsd_ar)
+        df_k['Total_Ft'] = df_k['Összeg_Ft'] + (df_k['Összeg_Dinar'] * rsd_ar)
         total_bev_ft = df_b['Összeg_Ft'].sum() + (df_b['Összeg_Dinar'].sum() * rsd_ar)
-        total_kolt_ft = df_k['Koltseg_Ft_Total'].sum()
+        total_kolt_ft = df_k['Total_Ft'].sum()
         profit_ft = total_bev_ft - total_kolt_ft
         
+        # Fő táblázat százalékos haszonnal
+        haszon_szazalek = (profit_ft / total_bev_ft * 100) if total_bev_ft > 0 else 0
         data = {
             "Pénznem": ["Forint (HUF)", "Dinár (RSD)", "Euró (EUR)"],
             "Bevétel": [f"{total_bev_ft:,.0f} Ft", f"{total_bev_ft/rsd_ar:,.0f} RSD", f"{total_bev_ft/eur_ar:,.2f} EUR"],
             "Költség": [f"{total_kolt_ft:,.0f} Ft", f"{total_kolt_ft/rsd_ar:,.0f} RSD", f"{total_kolt_ft/eur_ar:,.2f} EUR"],
-            "Haszon": [f"{profit_ft:,.0f} Ft", f"{profit_ft/rsd_ar:,.0f} RSD", f"{profit_ft/eur_ar:,.2f} EUR"]
+            "Haszon": [f"{profit_ft:,.0f} Ft ({haszon_szazalek:.1f}%)", f"{profit_ft/rsd_ar:,.0f} RSD", f"{profit_ft/eur_ar:,.2f} EUR"]
         }
         st.table(pd.DataFrame(data))
-
-        # KOMPAKT LISTÁZÁS
+        
+        # Vizuális sávok
+        max_ertek = max(total_bev_ft, total_kolt_ft, abs(profit_ft))
+        def get_bar(ertek):
+            return "█" * int((abs(ertek) / max_ertek) * 20) if max_ertek > 0 else ""
+        
+        st.write(f"**Arányos méret:** | Bevétel: {get_bar(total_bev_ft)} | Költség: {get_bar(total_kolt_ft)} | Haszon: {get_bar(profit_ft)}")
+        
+        # Részletes kiadások
         st.subheader("Részletes kiadások")
         for kat in df_k['Kategória'].unique():
             with st.expander(f"📂 {kat}"):
                 df_sub = df_k[df_k['Kategória'] == kat]
-                eszkoz_ossz = df_sub.groupby('Megnevezés')['Koltseg_Ft_Total'].sum().reset_index()
-                for _, row in eszkoz_ossz.iterrows():
-                    st.text(f"• {row['Megnevezés']}: {row['Koltseg_Ft_Total']:,.0f} Ft")
+                for _, row in df_sub.iterrows():
+                    st.text(f"• {row['Megnevezés']}: {row['Total_Ft']:,.0f} Ft")
             
     except:
         st.info("Még nincs elég adat a kimutatáshoz.")
 
 else:
-    # Kategóriák kezelése
     st.subheader("Kategóriák kezelése")
     with st.expander("Új kategória hozzáadása"):
         new_kat = st.text_input("Új kategória neve:")
