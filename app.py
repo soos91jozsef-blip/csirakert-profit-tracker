@@ -8,22 +8,30 @@ st.set_page_config(page_title="Csírakert - Profit Tracker", layout="wide")
 
 @st.cache_resource
 def get_sheets_client():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     return gspread.authorize(creds)
 
 try:
     client = get_sheets_client()
-    sheet = client.open("Csírakert_Adatbazis")
+    # Közvetlen hozzáférés az ID alapján
+    sheet = client.open_by_key("1ekoKF2c9EZF0SvBRjsLb9vycud5djMXSBbPrfnha2Hw")
     col_sheet = sheet.worksheet("Penzugy_Koltsegek")
     rev_sheet = sheet.worksheet("Penzugy_Bevetelek")
 except Exception as e:
-    st.error("Nem sikerült kapcsolódni a Google Táblázathoz. Ellenőrizd a beállításokat!")
+    st.error(f"Hiba történt a kapcsolódásnál: {e}")
     st.stop()
 
 def load_data(worksheet):
-    data = worksheet.get_all_records()
-    return pd.DataFrame(data) if data else pd.DataFrame()
+    try:
+        data = worksheet.get_all_records()
+        return pd.DataFrame(data) if data else pd.DataFrame(columns=["Dátum", "Összeg"])
+    except Exception as e:
+        st.error(f"Hiba az adatok betöltésekor: {e}")
+        return pd.DataFrame()
 
 df_costs = load_data(col_sheet)
 df_revenues = load_data(rev_sheet)
@@ -48,5 +56,8 @@ else:
 
 # Összegzés
 col1, col2 = st.columns(2)
-col1.metric("Költségek", f"{df_costs['Összeg'].sum() if not df_costs.empty else 0:,.2f}")
-col2.metric("Bevételek", f"{df_revenues['Összeg'].sum() if not df_revenues.empty else 0:,.2f}")
+costs_sum = df_costs['Összeg'].sum() if 'Összeg' in df_costs.columns else 0
+revenues_sum = df_revenues['Összeg'].sum() if 'Összeg' in df_revenues.columns else 0
+
+col1.metric("Összes Költség", f"{costs_sum:,.2f} Ft")
+col2.metric("Összes Bevétel", f"{revenues_sum:,.2f} Ft")
