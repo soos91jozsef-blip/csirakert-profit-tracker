@@ -4,60 +4,88 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-st.set_page_config(page_title="Csírakert - Profit Tracker", layout="wide")
+# Oldal beállítása
+st.set_page_config(page_title="Csírakert Pénzügy", layout="centered")
 
+# Google Sheets kapcsolat
 @st.cache_resource
-def get_sheets_client():
-    scope = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-    return gspread.authorize(creds)
+def get_gspread_client():
+    creds_dict = st.secrets["gcp_service_account"]
+    creds = Credentials.from_service_account_info(creds_dict)
+    scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds_with_scope = creds.with_scopes(scope)
+    return gspread.authorize(creds_with_scope)
+
+def load_data(sheet_name):
+    client = get_gspread_client()
+    spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    sheet = client.open_by_url(spreadsheet_url).worksheet(sheet_name)
+    data = sheet.get_all_records()
+    return pd.DataFrame(data), sheet
+
+# UI: Fejléc
+st.title("🌱 Csírakert Pénzügy")
+
+# Adatbevitel
+menu = st.radio("Mit rögzítesz?", ["Költség", "Bevétel"], horizontal=True)
+
+with st.form("adatbevitel_form"):
+    col1, col2 = st.columns(2)
+    with col1:
+        date = st.date_input("Dátum", datetime.now())
+        megnev = st.text_input("Megnevezés/Eszköz")
+    with col2:
+        ft = st.number_input("Összeg (Ft)", min_value=0.0, step=10.0)
+        dinar = st.number_input("Összeg (Dinar)", min_value=0.0, step=10.0)
+    
+    kategoria = None
+    if menu == "Költség":
+        kategoria = st.selectbox("Kategória", ["Magok", "Eszközök", "Szállítás", "Egyéb"])
+
+    submit = st.form_submit_button("Mentés a táblázatba")
+
+if submit:
+    try:
+        if menu == "Költség":
+            _, sheet = load_data("Penzugy_Koltsegek")
+            sheet.append_row([str(date), megnev, kategoria, ft, dinar])
+        else:
+            _, sheet = load_data("Penzugy_Bevetelek")
+            sheet.append_row([str(date), megnev, ft, dinar])
+        st.success("Sikeresen elmentve!")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Hiba történt: {e}")
+
+# Riport és Profit
+st.divider()
+st.header("📊 Kimutatás")
 
 try:
-    client = get_sheets_client()
-    # Közvetlen hozzáférés az ID alapján
-    sheet = client.open_by_key("1ekoKF2c9EZF0SvBRjsLb9vycud5djMXSBbPrfnha2Hw")
-    col_sheet = sheet.worksheet("Penzugy_Koltsegek")
-    rev_sheet = sheet.worksheet("Penzugy_Bevetelek")
+    df_k, _ = load_data("Penzugy_Koltsegek")
+    df_b, _ = load_data("Penzugy_Bevetelek")
+
+    # Árfolyam beállítása (ezt később akár egy külön lapról is olvashatja az app)
+    arfolyam = 3.5 
+
+    # Profit számítás: Összes Ft + (Összes Dinar * árfolyam)
+    def calc_total(df):
+        return df['Összeg_Ft'].sum() + (df['Összeg_Dinar'].sum() * arfolyam)
+
+    total_bev = calc_total(df_b)
+    total_kolt = calc_total(df_k)
+    profit = total_bev - total_kolt
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Bevétel (Ft)", f"{total_bev:,.0f}")
+    c2.metric("Költség (Ft)", f"{total_kolt:,.0f}")
+    c3.metric("Profit (Ft)", f"{profit:,.0f}")
+
+    with st.expander("Részletes adatok"):
+        st.write("### Bevételek")
+        st.dataframe(df_b)
+        st.write("### Költségek")
+        st.dataframe(df_k)
+
 except Exception as e:
-    st.error(f"Hiba történt a kapcsolódásnál: {e}")
-    st.stop()
-
-def load_data(worksheet):
-    try:
-        data = worksheet.get_all_records()
-        return pd.DataFrame(data) if data else pd.DataFrame(columns=["Dátum", "Összeg"])
-    except Exception as e:
-        st.error(f"Hiba az adatok betöltésekor: {e}")
-        return pd.DataFrame()
-
-df_costs = load_data(col_sheet)
-df_revenues = load_data(rev_sheet)
-
-st.title("🌱 Csírakert - Profit és Költség Tracker")
-
-# Sidebar
-option = st.sidebar.radio("Mit rögzítesz?", ["📉 Új Költség", "📈 Új Bevétel"])
-current_date = datetime.now().strftime("%Y-%m-%d")
-
-if option == "📉 Új Költség":
-    cat = st.sidebar.text_input("Kategória:")
-    val = st.sidebar.number_input("Összeg:", min_value=0.0)
-    if st.sidebar.button("Mentés"):
-        col_sheet.append_row([current_date, cat, val, ""])
-        st.rerun()
-else:
-    val = st.sidebar.number_input("Bevétel összege:", min_value=0.0)
-    if st.sidebar.button("Mentés"):
-        rev_sheet.append_row([current_date, val, ""])
-        st.rerun()
-
-# Összegzés
-col1, col2 = st.columns(2)
-costs_sum = df_costs['Összeg'].sum() if 'Összeg' in df_costs.columns else 0
-revenues_sum = df_revenues['Összeg'].sum() if 'Összeg' in df_revenues.columns else 0
-
-col1.metric("Összes Költség", f"{costs_sum:,.2f} Ft")
-col2.metric("Összes Bevétel", f"{revenues_sum:,.2f} Ft")
+    st.info("Még nincs elég adat a kimutatáshoz, vagy nem elérhető a táblázat.")
