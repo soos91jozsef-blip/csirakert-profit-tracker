@@ -8,7 +8,7 @@ from datetime import datetime
 # Oldal beállítása
 st.set_page_config(page_title="Csírakert Pénzügy", layout="centered")
 
-# --- API és Google kapcsolatok ---
+# --- 1. API és Google kapcsolatok ---
 @st.cache_data(ttl=21600) # Frissítés kb. 6 óránként
 def get_exchange_rates():
     try:
@@ -39,7 +39,7 @@ def load_data(sheet_name):
     data = sheet.get_all_records()
     return pd.DataFrame(data), sheet
 
-# --- Felhasználói felület ---
+# --- 2. Felhasználói felület ---
 st.title("🌱 Csírakert Pénzügy")
 
 rsd_ar, eur_ar = get_exchange_rates()
@@ -83,7 +83,7 @@ if mode == "Adatrögzítés":
         except Exception as e:
             st.error(f"Hiba történt: {e}")
 
-    # Kimutatás 3 pénznemben
+    # Kimutatás 3 pénznemben + vizuális oszlopok
     st.divider()
     st.header("📊 Kimutatás")
     try:
@@ -94,30 +94,34 @@ if mode == "Adatrögzítés":
         total_kolt_ft = df_k['Összeg_Ft'].sum() + (df_k['Összeg_Dinar'].sum() * rsd_ar)
         profit_ft = total_bev_ft - total_kolt_ft
         
+        # Százalék számítás
+        haszon_szazalek = (profit_ft / total_bev_ft * 100) if total_bev_ft > 0 else 0
+        
         st.subheader("Pénzügyi összegzés")
         data = {
             "Pénznem": ["Forint (HUF)", "Dinár (RSD)", "Euró (EUR)"],
-            "Bevétel": [
-                f"{total_bev_ft:,.0f} Ft", 
-                f"{total_bev_ft / rsd_ar:,.0f} RSD", 
-                f"{total_bev_ft / eur_ar:,.2f} EUR"
-            ],
-            "Költség": [
-                f"{total_kolt_ft:,.0f} Ft", 
-                f"{total_kolt_ft / rsd_ar:,.0f} RSD", 
-                f"{total_kolt_ft / eur_ar:,.2f} EUR"
-            ],
-            "Haszon": [
-                f"{profit_ft:,.0f} Ft", 
-                f"{profit_ft / rsd_ar:,.0f} RSD", 
-                f"{profit_ft / eur_ar:,.2f} EUR"
-            ]
+            "Bevétel": [f"{total_bev_ft:,.0f} Ft", f"{total_bev_ft/rsd_ar:,.0f} RSD", f"{total_bev_ft/eur_ar:,.2f} EUR"],
+            "Költség": [f"{total_kolt_ft:,.0f} Ft", f"{total_kolt_ft/rsd_ar:,.0f} RSD", f"{total_kolt_ft/eur_ar:,.2f} EUR"],
+            "Haszon": [f"{profit_ft:,.0f} Ft ({haszon_szazalek:.1f}%)", f"{profit_ft/rsd_ar:,.0f} RSD", f"{profit_ft/eur_ar:,.2f} EUR"]
         }
         st.table(pd.DataFrame(data))
+        
+        # Vizuális sávok
+        max_ertek = max(total_bev_ft, total_kolt_ft, abs(profit_ft))
+        def get_bar(ertek):
+            if max_ertek == 0: return ""
+            return "█" * int((abs(ertek) / max_ertek) * 20)
+        
+        st.write("**Arányos méret:**")
+        st.write(f"Bevétel: {get_bar(total_bev_ft)}")
+        st.write(f"Költség: {get_bar(total_kolt_ft)}")
+        st.write(f"Haszon:  {get_bar(profit_ft)}")
+        
     except:
         st.info("Még nincs elég adat a kimutatáshoz.")
 
 else:
+    # Kategóriák kezelése
     st.subheader("Kategóriák kezelése")
     with st.expander("Új kategória hozzáadása"):
         new_kat = st.text_input("Új kategória neve:")
