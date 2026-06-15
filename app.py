@@ -36,11 +36,12 @@ def load_data(sheet_name):
 
 # --- Felület ---
 st.title("🌱 Csírakert Pénzügy")
-st.markdown("---")
 rsd_ar, eur_ar = get_exchange_rates()
 
-mode = st.radio("Mód:", ["Adatrögzítés", "Kategóriák kezelése"], horizontal=True)
+# Módok
+mode = st.radio("Mód:", ["Adatrögzítés", "Rekord törlése", "Kategóriák kezelése"], horizontal=True)
 
+# 1. MÓD: ADATRÖGZÍTÉS
 if mode == "Adatrögzítés":
     menu = st.radio("Mit rögzítesz?", ["Költség", "Bevétel"], horizontal=True)
     with st.form("adat", clear_on_submit=True):
@@ -51,12 +52,10 @@ if mode == "Adatrögzítés":
         dinar = c2.number_input("Összeg (Dinár)", min_value=0.0)
         
         kat_df, _ = load_data("Kategoriak")
-        # Biztonságos kategória választó
         if not kat_df.empty and 'Nev' in kat_df.columns:
             kategoria = st.selectbox("Kategória", kat_df['Nev'].tolist()) if menu == "Költség" else None
         else:
             kategoria = None
-            st.warning("Nincsenek kategóriák definiálva.")
         
         if st.form_submit_button("Mentés"):
             sheet_name = "Penzugy_Koltsegek" if menu == "Költség" else "Penzugy_Bevetelek"
@@ -67,22 +66,16 @@ if mode == "Adatrögzítés":
 
     st.markdown("---")
     st.header("📊 Kimutatás")
-    
     df_k, _ = load_data("Penzugy_Koltsegek")
     df_b, _ = load_data("Penzugy_Bevetelek")
     
     # Számítások
-    if not df_k.empty and 'Összeg_Ft' in df_k.columns and 'Összeg_Dinar' in df_k.columns:
-        df_k['Total_Ft'] = df_k['Összeg_Ft'] + (df_k['Összeg_Dinar'] * rsd_ar)
-    else:
-        df_k['Total_Ft'] = 0
-        
-    total_bev_ft = df_b['Összeg_Ft'].sum() + (df_b['Összeg_Dinar'].sum() * rsd_ar) if not df_b.empty else 0
+    df_k['Total_Ft'] = df_k['Összeg_Ft'] + (df_k['Összeg_Dinar'] * rsd_ar)
+    total_bev_ft = df_b['Összeg_Ft'].sum() + (df_b['Összeg_Dinar'].sum() * rsd_ar)
     total_kolt_ft = df_k['Total_Ft'].sum()
     profit_ft = total_bev_ft - total_kolt_ft
     haszon_szazalek = (profit_ft / total_bev_ft * 100) if total_bev_ft > 0 else 0
     
-    # Összesítő tábla
     data_summary = {
         "Pénznem": ["Forint (HUF)", "Dinár (RSD)", "Euró (EUR)"],
         "Bevétel": [f"{total_bev_ft:,.0f} Ft", f"{total_bev_ft/rsd_ar:,.0f} RSD", f"{total_bev_ft/eur_ar:,.2f} EUR"],
@@ -91,34 +84,40 @@ if mode == "Adatrögzítés":
     }
     st.table(pd.DataFrame(data_summary))
 
-    # Részletes kiadások
-    st.header("📋 Részletes kiadások kategóriánként")
-    if not df_k.empty and 'Kategória' in df_k.columns:
-        for kat in df_k['Kategória'].unique():
-            st.markdown(f"### 📁 Kategória: {kat}")
-            cat_df = df_k[df_k['Kategória'] == kat]
-            
-            reszletes = cat_df.groupby('Megnevezés').agg({
-                'Összeg_Ft': 'sum',
-                'Összeg_Dinar': 'sum'
-            }).reset_index()
-            
-            reszletes['Összesen (Ft)'] = reszletes['Összeg_Ft'] + (reszletes['Összeg_Dinar'] * rsd_ar)
-            reszletes['Összesen (RSD)'] = reszletes['Összesen (Ft)'] / rsd_ar
-            reszletes['Összesen (EUR)'] = reszletes['Összesen (Ft)'] / eur_ar
-            
-            st.table(reszletes[['Megnevezés', 'Összesen (Ft)', 'Összesen (RSD)', 'Összesen (EUR)']].style.format({
-                'Összesen (Ft)': '{:,.0f}',
-                'Összesen (RSD)': '{:,.0f}',
-                'Összesen (EUR)': '{:,.2f}'
-            }))
-    else:
-        st.info("Nincs rögzített költség.")
+    st.header("📋 Részletes kiadások")
+    for kat in df_k['Kategória'].unique():
+        st.markdown(f"### 📁 Kategória: {kat}")
+        cat_df = df_k[df_k['Kategória'] == kat]
+        reszletes = cat_df.groupby('Megnevezés').agg({'Összeg_Ft': 'sum', 'Összeg_Dinar': 'sum'}).reset_index()
+        reszletes['Összesen (Ft)'] = reszletes['Összeg_Ft'] + (reszletes['Összeg_Dinar'] * rsd_ar)
+        reszletes['Összesen (RSD)'] = reszletes['Összesen (Ft)'] / rsd_ar
+        reszletes['Összesen (EUR)'] = reszletes['Összesen (Ft)'] / eur_ar
+        st.table(reszletes[['Megnevezés', 'Összesen (Ft)', 'Összesen (RSD)', 'Összesen (EUR)']].style.format({
+            'Összesen (Ft)': '{:,.0f}', 'Összesen (RSD)': '{:,.0f}', 'Összesen (EUR)': '{:,.2f}'
+        }))
 
+# 2. MÓD: REKORD TÖRLÉSE
+elif mode == "Rekord törlése":
+    st.header("🗑️ Hibás rekord törlése")
+    sheet_sel = st.radio("Melyik táblából törölnél?", ["Penzugy_Koltsegek", "Penzugy_Bevetelek"])
+    df, sheet = load_data(sheet_sel)
+    
+    if not df.empty:
+        # Megjelenítjük a táblázatot, hogy lásd mit törölsz
+        st.dataframe(df)
+        # Sorszám kiválasztása (Google Sheets-ben a sorindex az index+2, mert 1-alapú és van fejléc)
+        row_idx = st.selectbox("Válaszd ki a törlendő sor sorszámát:", range(len(df)))
+        if st.button("Kijelölt sor végleges törlése"):
+            sheet.delete_rows(row_idx + 2)
+            st.success(f"A(z) {row_idx + 1}. sor törölve.")
+            st.rerun()
+    else:
+        st.info("A táblázat üres.")
+
+# 3. MÓD: KATEGÓRIÁK KEZELÉSE
 else:
     st.header("Kategóriák kezelése")
     kat_df, sheet = load_data("Kategoriak")
-    
     new_kat = st.text_input("Új kategória neve:")
     if st.button("Hozzáadás"):
         if new_kat:
@@ -126,13 +125,9 @@ else:
             st.rerun()
     
     st.markdown("---")
-    st.subheader("Kategória törlése")
-    # ITT JAVÍTOTTAM: Ellenőrzés, hogy létezik-e a 'Nev' oszlop
     if not kat_df.empty and 'Nev' in kat_df.columns:
-        torlendo = st.selectbox("Törlés:", kat_df['Nev'].tolist())
+        torlendo = st.selectbox("Kategória törlése:", kat_df['Nev'].tolist())
         if st.button("Kategória törlése véglegesítése"):
             cell = sheet.find(torlendo)
             sheet.delete_rows(cell.row)
             st.rerun()
-    else:
-        st.info("Nincsenek kategóriák a törléshez.")
