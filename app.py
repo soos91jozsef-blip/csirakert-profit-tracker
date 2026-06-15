@@ -9,17 +9,23 @@ from datetime import datetime
 st.set_page_config(page_title="Csírakert Pénzügy", layout="centered")
 
 # --- 1. API és Google kapcsolatok ---
-@st.cache_data(ttl=21600) # ttl=21600 mp (6 óra) -> így kb. naponta 4-szer frissít
-def get_exchange_rate():
+@st.cache_data(ttl=21600)
+def get_exchange_rates():
     try:
         api_key = st.secrets["api"]["exchange_rate_key"]
-        url = f"https://v6.exchangerate-api.com/v6/{api_key}/pair/RSD/HUF"
+        # Lekérjük az EUR-t és az RSD-t is forinthoz képest
+        url = f"https://v6.exchangerate-api.com/v6/{api_key}/latest/HUF"
         response = requests.get(url).json()
         if response['result'] == 'success':
-            return response['conversion_rate']
+            rates = response['conversion_rates']
+            # Mivel az API HUF-alapú, visszafelé számolunk (pl. 1 RSD = X HUF)
+            # 1 / árfolyam = forint érték
+            rsd_to_huf = 1 / rates['RSD']
+            eur_to_huf = 1 / rates['EUR']
+            return rsd_to_huf, eur_to_huf
     except:
         pass
-    return 3.0 # Biztonsági alapértelmezett, ha az API nem elérhető
+    return 3.0, 400.0 # Biztonsági alapértelmezett értékek
 
 @st.cache_resource
 def get_gspread_client():
@@ -39,9 +45,8 @@ def load_data(sheet_name):
 # --- 2. Felhasználói felület ---
 st.title("🌱 Csírakert Pénzügy")
 
-# Árfolyam kijelzése
-arfolyam = get_exchange_rate()
-st.caption(f"Aktuális árfolyam: 1 RSD = {arfolyam:.2f} HUF")
+rsd_ar, eur_ar = get_exchange_rates()
+st.caption(f"Árfolyamok: 1 RSD ≈ {rsd_ar:.2f} Ft | 1 EUR ≈ {eur_ar:.2f} Ft")
 
 mode = st.radio("Mód:", ["Adatrögzítés", "Kategóriák kezelése"], horizontal=True)
 
@@ -81,26 +86,30 @@ if mode == "Adatrögzítés":
         except Exception as e:
             st.error(f"Hiba történt: {e}")
 
+    # Kimutatás 3 pénznemben
     st.divider()
     st.header("📊 Kimutatás")
     try:
         df_k, _ = load_data("Penzugy_Koltsegek")
         df_b, _ = load_data("Penzugy_Bevetelek")
         
-        def calc_total(df):
-            return df['Összeg_Ft'].sum() + (df['Összeg_Dinar'].sum() * arfolyam)
+        # Összesítés forintban
+        total_bev_ft = df_b['Összeg_Ft'].sum() + (df_b['Összeg_Dinar'].sum() * rsd_ar)
+        total_kolt_ft = df_k['Összeg_Ft'].sum() + (df_k['Összeg_Dinar'].sum() * rsd_ar)
+        profit_ft = total_bev_ft - total_kolt_ft
         
-        total_bev = calc_total(df_b)
-        total_kolt = calc_total(df_k)
+        # Konvertálás
+        st.subheader("Profit")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Forintban", f"{profit_ft:,.0f} Ft")
+        col2.metric("Dinárban", f"{profit_ft / rsd_ar:,.0f} RSD")
+        col3.metric("Euróban", f"{profit_ft / eur_ar:,.2f} EUR")
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Bevétel (Ft)", f"{total_bev:,.0f}")
-        c2.metric("Költség (Ft)", f"{total_kolt:,.0f}")
-        c3.metric("Profit (Ft)", f"{total_bev - total_kolt:,.0f}")
     except:
         st.info("Még nincs elég adat a kimutatáshoz.")
 
 else:
+    # Kategóriák kezelése rész marad változatlan...
     st.subheader("Kategóriák kezelése")
     with st.expander("Új kategória hozzáadása"):
         new_kat = st.text_input("Új kategória neve:")
