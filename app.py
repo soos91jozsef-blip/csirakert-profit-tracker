@@ -9,7 +9,7 @@ from datetime import datetime
 st.set_page_config(page_title="Csírakert Pénzügy", layout="centered")
 
 # --- 1. API és Google kapcsolatok ---
-@st.cache_data(ttl=21600) # Frissítés kb. 6 óránként
+@st.cache_data(ttl=21600)
 def get_exchange_rates():
     try:
         api_key = st.secrets["api"]["exchange_rate_key"]
@@ -22,7 +22,7 @@ def get_exchange_rates():
             return rsd_to_huf, eur_to_huf
     except:
         pass
-    return 3.0, 400.0 # Biztonsági alapértelmezett értékek
+    return 3.0, 400.0
 
 @st.cache_resource
 def get_gspread_client():
@@ -83,7 +83,7 @@ if mode == "Adatrögzítés":
         except Exception as e:
             st.error(f"Hiba történt: {e}")
 
-    # Kimutatás 3 pénznemben + vizuális oszlopok
+    # Kimutatás 3 pénznemben + Kategóriánkénti összesítő
     st.divider()
     st.header("📊 Kimutatás")
     try:
@@ -94,10 +94,8 @@ if mode == "Adatrögzítés":
         total_kolt_ft = df_k['Összeg_Ft'].sum() + (df_k['Összeg_Dinar'].sum() * rsd_ar)
         profit_ft = total_bev_ft - total_kolt_ft
         
-        # Százalék számítás
+        # Pénzügyi Összegzés Táblázat
         haszon_szazalek = (profit_ft / total_bev_ft * 100) if total_bev_ft > 0 else 0
-        
-        st.subheader("Pénzügyi összegzés")
         data = {
             "Pénznem": ["Forint (HUF)", "Dinár (RSD)", "Euró (EUR)"],
             "Bevétel": [f"{total_bev_ft:,.0f} Ft", f"{total_bev_ft/rsd_ar:,.0f} RSD", f"{total_bev_ft/eur_ar:,.2f} EUR"],
@@ -106,18 +104,15 @@ if mode == "Adatrögzítés":
         }
         st.table(pd.DataFrame(data))
         
-        # Vizuális sávok
-        max_ertek = max(total_bev_ft, total_kolt_ft, abs(profit_ft))
-        def get_bar(ertek):
-            if max_ertek == 0: return ""
-            return "█" * int((abs(ertek) / max_ertek) * 20)
+        # Kategóriánkénti kiadások
+        st.subheader("Kategóriánkénti kiadások")
+        if not df_k.empty:
+            df_k['Koltseg_Ft_Total'] = df_k['Összeg_Ft'] + (df_k['Összeg_Dinar'] * rsd_ar)
+            kat_ossz = df_k.groupby('Kategória')['Koltseg_Ft_Total'].sum().reset_index()
+            kat_ossz.columns = ['Kategória', 'Összesen (Ft)']
+            st.dataframe(kat_ossz.style.format({'Összesen (Ft)': '{:,.0f} Ft'}))
         
-        st.write("**Arányos méret:**")
-        st.write(f"Bevétel: {get_bar(total_bev_ft)}")
-        st.write(f"Költség: {get_bar(total_kolt_ft)}")
-        st.write(f"Haszon:  {get_bar(profit_ft)}")
-        
-    except:
+    except Exception as e:
         st.info("Még nincs elég adat a kimutatáshoz.")
 
 else:
