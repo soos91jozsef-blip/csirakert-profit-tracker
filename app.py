@@ -9,6 +9,8 @@ from datetime import datetime
 st.set_page_config(page_title="Csírakert Pénzügy", layout="wide")
 
 # --- Funkciók ---
+
+# 1. Árfolyamok lekérése
 @st.cache_data(ttl=21600)
 def get_exchange_rates():
     try:
@@ -20,6 +22,7 @@ def get_exchange_rates():
     except:
         return 3.0, 400.0
 
+# 2. Google Sheets csatlakozás
 @st.cache_resource
 def get_gspread_client():
     creds_dict = st.secrets["gcp_service_account"]
@@ -27,6 +30,7 @@ def get_gspread_client():
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     return gspread.authorize(creds.with_scopes(scope))
 
+# 3. Adatok betöltése biztonsági ellenőrzéssel
 def load_data(sheet_name):
     client = get_gspread_client()
     spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
@@ -34,26 +38,30 @@ def load_data(sheet_name):
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
     
-    # BIZTONSÁGI JAVÍTÁS: Ha üres a táblázat, létrehozzuk az üres DataFrame-et a megfelelő oszlopokkal
+    # Ha üres a tábla, definiáljuk az oszlopokat, hogy ne legyen hiba
     expected_cols = {
         "Penzugy_Koltsegek": ['Dátum', 'Megnevezés', 'Kategória', 'Összeg_Ft', 'Összeg_Dinar'],
         "Penzugy_Bevetelek": ['Dátum', 'Megnevezés', 'Összeg_Ft', 'Összeg_Dinar'],
         "Kategoriak": ['Nev']
     }
+    
     if df.empty and sheet_name in expected_cols:
         return pd.DataFrame(columns=expected_cols[sheet_name]), sheet
+    
     return df, sheet
 
 # --- Felület ---
+
 st.title("🌱 Csírakert Pénzügy")
 rsd_ar, eur_ar = get_exchange_rates()
 
-# Módok
+# Mód választó
 mode = st.radio("Mód:", ["Adatrögzítés", "Rekord törlése", "Kategóriák kezelése"], horizontal=True)
 
 # 1. MÓD: ADATRÖGZÍTÉS
 if mode == "Adatrögzítés":
     menu = st.radio("Mit rögzítesz?", ["Költség", "Bevétel"], horizontal=True)
+    
     with st.form("adat", clear_on_submit=True):
         c1, c2 = st.columns(2)
         megnev = c1.text_input("Megnevezés/Eszköz")
@@ -62,31 +70,42 @@ if mode == "Adatrögzítés":
         dinar = c2.number_input("Összeg (Dinár)", min_value=0.0)
         
         kat_df, _ = load_data("Kategoriak")
-        kategoria = st.selectbox("Kategória", kat_df['Nev'].tolist()) if (menu == "Költség" and not kat_df.empty) else None
+        
+        # Kategória választó csak költségnél
+        kategoria = None
+        if menu == "Költség":
+            if not kat_df.empty:
+                kategoria = st.selectbox("Kategória", kat_df['Nev'].tolist())
+            else:
+                st.warning("Nincsenek kategóriák. Előbb rögzíts egyet!")
         
         if st.form_submit_button("Mentés"):
             sheet_name = "Penzugy_Koltsegek" if menu == "Költség" else "Penzugy_Bevetelek"
             _, sheet = load_data(sheet_name)
             row = [str(date), megnev, kategoria, ft, dinar] if menu == "Költség" else [str(date), megnev, ft, dinar]
             sheet.append_row(row)
+            
+            # Cache ürítése, hogy azonnal frissüljön
+            st.cache_data.clear()
             st.rerun()
 
     st.markdown("---")
     st.header("📊 Kimutatás")
+    
     df_k, _ = load_data("Penzugy_Koltsegek")
     df_b, _ = load_data("Penzugy_Bevetelek")
     
     # Számítások
+    total_kolt_ft = 0
     if not df_k.empty:
         df_k['Total_Ft'] = df_k['Összeg_Ft'] + (df_k['Összeg_Dinar'] * rsd_ar)
         total_kolt_ft = df_k['Total_Ft'].sum()
-    else:
-        total_kolt_ft = 0
         
     total_bev_ft = (df_b['Összeg_Ft'].sum() + (df_b['Összeg_Dinar'].sum() * rsd_ar)) if not df_b.empty else 0
     profit_ft = total_bev_ft - total_kolt_ft
     haszon_szazalek = (profit_ft / total_bev_ft * 100) if total_bev_ft > 0 else 0
     
+    # Összesítés táblázat
     data_summary = {
         "Pénznem": ["Forint (HUF)", "Dinár (RSD)", "Euró (EUR)"],
         "Bevétel": [f"{total_bev_ft:,.0f} Ft", f"{total_bev_ft/rsd_ar:,.0f} RSD", f"{total_bev_ft/eur_ar:,.2f} EUR"],
@@ -101,15 +120,17 @@ if mode == "Adatrögzítés":
             if pd.isna(kat): continue
             st.markdown(f"### 📁 Kategória: {kat}")
             cat_df = df_k[df_k['Kategória'] == kat]
+            
             reszletes = cat_df.groupby('Megnevezés').agg({'Összeg_Ft': 'sum', 'Összeg_Dinar': 'sum'}).reset_index()
             reszletes['Összesen (Ft)'] = reszletes['Összeg_Ft'] + (reszletes['Összeg_Dinar'] * rsd_ar)
             reszletes['Összesen (RSD)'] = reszletes['Összesen (Ft)'] / rsd_ar
             reszletes['Összesen (EUR)'] = reszletes['Összesen (Ft)'] / eur_ar
+            
             st.table(reszletes[['Megnevezés', 'Összesen (Ft)', 'Összesen (RSD)', 'Összesen (EUR)']].style.format({
                 'Összesen (Ft)': '{:,.0f}', 'Összesen (RSD)': '{:,.0f}', 'Összesen (EUR)': '{:,.2f}'
             }))
     else:
-        st.info("Még nincs rögzített költség.")
+        st.info("Nincs rögzített költség.")
 
 # 2. MÓD: REKORD TÖRLÉSE
 elif mode == "Rekord törlése":
@@ -120,9 +141,10 @@ elif mode == "Rekord törlése":
     if not df.empty:
         st.dataframe(df)
         row_idx = st.selectbox("Válaszd ki a törlendő sor sorszámát:", range(len(df)))
+        
         if st.button("Kijelölt sor végleges törlése"):
-            sheet.delete_rows(row_idx + 2) # +2, mert gspread 1-alapú és van fejléc
-            st.success(f"A(z) {row_idx + 1}. sor törölve.")
+            sheet.delete_rows(row_idx + 2) # +2 mert gspread 1-alapú és van fejléc
+            st.cache_data.clear() # Frissítés
             st.rerun()
     else:
         st.info("A táblázat üres.")
@@ -131,10 +153,16 @@ elif mode == "Rekord törlése":
 else:
     st.header("Kategóriák kezelése")
     kat_df, sheet = load_data("Kategoriak")
+    
+    if not kat_df.empty:
+        st.subheader("Jelenlegi kategóriák:")
+        st.write(kat_df['Nev'].tolist())
+        
     new_kat = st.text_input("Új kategória neve:")
     if st.button("Hozzáadás"):
         if new_kat:
             sheet.append_row([new_kat])
+            st.cache_data.clear() # Frissítés
             st.rerun()
     
     st.markdown("---")
@@ -143,4 +171,5 @@ else:
         if st.button("Kategória törlése véglegesítése"):
             cell = sheet.find(torlendo)
             sheet.delete_rows(cell.row)
+            st.cache_data.clear() # Frissítés
             st.rerun()
