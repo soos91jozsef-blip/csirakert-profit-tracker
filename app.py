@@ -6,7 +6,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 
 # Oldal beállítása
-st.set_page_config(page_title="Csírakert Pénzügy", layout="wide")
+st.set_page_config(page_title="Csírakert Pénzügy", layout="centered")
 
 # --- 1. API és Google kapcsolatok ---
 @st.cache_data(ttl=21600)
@@ -91,7 +91,6 @@ if mode == "Adatrögzítés":
         total_kolt_ft = df_k['Koltseg_Ft_Total'].sum()
         profit_ft = total_bev_ft - total_kolt_ft
         
-        # Fő táblázat
         data = {
             "Pénznem": ["Forint (HUF)", "Dinár (RSD)", "Euró (EUR)"],
             "Bevétel": [f"{total_bev_ft:,.0f} Ft", f"{total_bev_ft/rsd_ar:,.0f} RSD", f"{total_bev_ft/eur_ar:,.2f} EUR"],
@@ -100,19 +99,14 @@ if mode == "Adatrögzítés":
         }
         st.table(pd.DataFrame(data))
 
-        # EGYEDI LISTÁZÁS
-        st.subheader("Kiadások részletes listája")
+        # KOMPAKT LISTÁZÁS
+        st.subheader("Részletes kiadások")
         for kat in df_k['Kategória'].unique():
-            st.markdown(f"### 📂 {kat}")
-            # Szűrjük az adott kategóriára
-            df_sub = df_k[df_k['Kategória'] == kat]
-            # Összesítjük az eszközöket
-            eszkoz_ossz = df_sub.groupby('Megnevezés')['Koltseg_Ft_Total'].sum().reset_index()
-            
-            for _, row in eszkoz_ossz.iterrows():
-                st.write(f"- **{row['Megnevezés']}**: {row['Koltseg_Ft_Total']:,.0f} Ft")
-            
-            st.write("---") # Elválasztó vonal a kategóriák között
+            with st.expander(f"📂 {kat}"):
+                df_sub = df_k[df_k['Kategória'] == kat]
+                eszkoz_ossz = df_sub.groupby('Megnevezés')['Koltseg_Ft_Total'].sum().reset_index()
+                for _, row in eszkoz_ossz.iterrows():
+                    st.text(f"• {row['Megnevezés']}: {row['Koltseg_Ft_Total']:,.0f} Ft")
             
     except:
         st.info("Még nincs elég adat a kimutatáshoz.")
